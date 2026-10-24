@@ -89,6 +89,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
+import com.music.bitchord.ui.tvFocusable
 
 /** How far the Listen now heading and feed sit above the shared top inset. */
 private val HOME_TITLE_LIFT = 28.dp
@@ -98,8 +99,6 @@ private const val RECENT_TRACKS_PER_COLUMN = 4
 
 private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Boolean {
     song ?: return { false }
-    // The card that was played, when the shelf holds it, and only that one —
-    // see [com.music.bitchord.data.model.playingRowMatcher], which rows use.
     if (any { it.videoId == song.videoId }) return { it.videoId == song.videoId }
     val byName = firstOrNull { it.videoId != null && it.title == song.title && it.subtitle == song.artist }
         ?: return { false }
@@ -111,7 +110,6 @@ private fun List<ShelfItem>.playingItemMatcher(song: Song?): (ShelfItem) -> Bool
 fun HomeScreen(
     state: UiState<List<HomeShelf>>,
     listState: LazyListState,
-    /** The tapped item and the recommendation shelf it came from. */
     onItemClick: (ShelfItem, String) -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
@@ -119,26 +117,13 @@ fun HomeScreen(
     pullState: PullToRefreshState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
-    /** The page's heading, or null for none — the desktop's pages carry no heading. */
     title: String?,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
-    /**
-     * Holding a card rather than tapping it. Every card on the feed answers,
-     * whichever kind it is: the caller reads the item the same way it does for
-     * a tap, so a track card opens the track menu and a card that points at a
-     * collection opens the album / playlist one.
-     */
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
-    // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
     recentlyPlayedLoading: Boolean = false,
-    /**
-     * Whether the feed's first shelf gets the big full-bleed cards. The phone
-     * leads with them; on a window as wide as a desktop's they are posters, so
-     * there every shelf is the ordinary row.
-     */
     leadHero: Boolean = true,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
@@ -154,8 +139,6 @@ fun HomeScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            // The heading sits higher than the other tabs' first row: pull the
-            // whole feed up by [HOME_TITLE_LIFT] with it.
             contentPadding = if (title != null) {
                 PaddingValues(
                     top = (contentPadding.calculateTopPadding() - HOME_TITLE_LIFT).coerceAtLeast(0.dp),
@@ -177,9 +160,6 @@ fun HomeScreen(
                 is UiState.Loading -> {
                     if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
-                        // Recents owns the leading layout while its request is
-                        // pending, so the feed behind it starts with ordinary
-                        // shelf placeholders rather than another hero card.
                         feedSkeleton(firstIsHero = false)
                     } else {
                         feedSkeleton(firstIsHero = leadHero)
@@ -192,9 +172,6 @@ fun HomeScreen(
                     if (recentlyPlayedLoading) {
                         recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
                     }
-                    // The loading skeleton already owns the hero slot. Until
-                    // Recently Played lands, every real shelf must retain its
-                    // compact-card layout instead of briefly becoming a hero.
                     itemsIndexedShelves(
                         shelves = state.data,
                         onItemClick = onItemClick,
@@ -221,13 +198,6 @@ fun HomeScreen(
 
     if (onLoadMore != null && state is UiState.Success) {
         val loadMore by rememberUpdatedState(onLoadMore)
-        // Re-checked on every layout change, rather than on the rising edge of
-        // "the tail is in view". A page that appends only a shelf or two leaves
-        // the list still near its end, so an edge-triggered effect would never
-        // fire a second time: the feed dead-ended at the bottom with no
-        // skeleton and no request in flight to explain it. Restarting on
-        // [loadingMore] re-checks the moment a page settles, so the next one is
-        // asked for while the tail is still on screen to show it loading.
         LaunchedEffect(listState, loadingMore) {
             snapshotFlow {
                 val layout = listState.layoutInfo
@@ -239,10 +209,6 @@ fun HomeScreen(
     }
 }
 
-/**
- * Recents mirrors the artist page's top-tracks pager. Any other lead shelf keeps
- * Apple's full-bleed treatment, while the remaining shelves use square cards.
- */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem, String) -> Unit,
@@ -264,7 +230,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     viewType = recentsViewType,
-                    onViewTypeToggle = onRecentsViewTypeToggle,
+                    onViewTypeToggle = onViewTypeToggle,
                 )
             } else if (index == 0 && firstIsHero) {
                 HeroShelf(
@@ -287,7 +253,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     }
 }
 
-/** The same four-rows-per-page treatment used by an artist's Top songs. */
 @Composable
 private fun RecentShelf(
     shelf: HomeShelf,
@@ -387,6 +352,7 @@ private fun RecentSectionHeader(
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
+                .tvFocusable()
                 .clickable(onClick = onViewTypeToggle),
             contentAlignment = Alignment.Center,
         ) {
@@ -429,10 +395,6 @@ private fun RecentTrackRow(
     )
 }
 
-/**
- * One row of Recents' four-to-a-column pager. Public so the desktop artist page
- * can list its top songs the same way.
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CompactTrackRow(
@@ -447,6 +409,7 @@ fun CompactTrackRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .tvFocusable()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress)
             .padding(vertical = 4.dp),
@@ -488,14 +451,6 @@ fun CompactTrackRow(
     }
 }
 
-/**
- * Listen now's large heading, with the wordmark stacked above it.
- *
- * Only the home tab carries it — the top bar no longer shows the logo, so this
- * is where the app's mark lives. Its height is taken from the heading's own
- * font size rather than a fixed dp, so the two keep their proportion under the
- * system font scale.
- */
 @Composable
 private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
     val style = MaterialTheme.typography.displayLarge
@@ -518,19 +473,9 @@ private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** The wordmark's height against the heading's font size. */
 private const val LOGO_TO_FONT = 0.9f
-
-/** ic_logo's viewport, 730 x 484. */
 private const val LOGO_ASPECT = 730f / 484f
 
-/**
- * Shared by the home feed, Explore and Library so headings line up across tabs.
- *
- * [onShowAll] is only ever set on Library, whose rows stop at five cards
- * rather than running the shelf's whole length — see [LibraryGridShelf].
- * Home and Explore never pass it, so their heading is unchanged.
- */
 @Composable
 internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
     val displayTitle = localizeShelfTitle(title)
@@ -565,12 +510,14 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
+                    .tvFocusable()
                     .clickable(onClick = onShowAll)
                     .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
         }
     }
 }
+
 @Composable
 internal fun localizeShelfTitle(title: String): String {
     val trimmed = title.trim()
@@ -678,6 +625,7 @@ internal fun localizeShelfTitle(title: String): String {
         else -> title
     }
 }
+
 @Composable
 internal fun localizeShelfSubtitle(subtitle: String): String {
     val trimmed = subtitle.trim()
@@ -752,10 +700,6 @@ private fun HeroShelf(
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
         val isCurrentItem = shelf.items.playingItemMatcher(currentSong)
-        // Measured rather than taken as a share of the parent, because the card
-        // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
-        // width is also the only one of the two the aspect ratio below can turn
-        // into a height, so the card keeps its shape however it was arrived at.
         BoxWithConstraints {
             val cardWidth = heroCardWidth(maxWidth)
             ShelfRow(
@@ -778,7 +722,6 @@ private fun HeroShelf(
     }
 }
 
-/** Big card: artwork with the caption laid over a scrim, as on Listen Now. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroCard(
@@ -795,6 +738,7 @@ private fun HeroCard(
             .clip(RoundedCornerShape(18.dp))
             .thumbnailBorder(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            .tvFocusable()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
@@ -837,13 +781,6 @@ private fun HeroCard(
     }
 }
 
-/**
- * [leadingCard] rides at the head of the row, ahead of the content — the
- * Library tab's "New playlist" tile, which belongs among the playlists rather
- * than in a bar somewhere above them. [onItemLongPress] opens the album /
- * playlist menu, and is null only where a card points at something with no
- * track list behind it to act on.
- */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun Shelf(
@@ -875,11 +812,6 @@ internal fun Shelf(
     }
 }
 
-/**
- * A card that isn't a thing yet — the dashed "New playlist" tile at the head
- * of the Library's playlist row, sized to sit in line with the covers beside
- * it rather than as a button bolted above them.
- */
 @Composable
 internal fun NewShelfCard(
     icon: ImageVector,
@@ -887,11 +819,12 @@ internal fun NewShelfCard(
     subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
-    /** A full-colour mark drawn in place of [icon], for a card that stands for a brand. */
     logo: DrawableResource? = null,
 ) {
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .tvFocusable()
+            .clickable(onClick = onClick),
     ) {
         Box(
             modifier = Modifier
@@ -902,8 +835,6 @@ internal fun NewShelfCard(
             contentAlignment = Alignment.Center,
         ) {
             if (logo != null) {
-                // The mark is a disc with the bars cut out, so tinting it
-                // leaves the bars clear: white on dark, black on light.
                 Icon(
                     painter = painterResource(logo),
                     contentDescription = null,
@@ -937,11 +868,6 @@ internal fun NewShelfCard(
     }
 }
 
-/**
- * A device-folder card: mesh gradient in the folder's colours with its glyph
- * on top. One composable for local music, WebDAV and SMB rather than three
- * copies of the same box.
- */
 @Composable
 private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector) {
     val palette = remember { MeshPalette(colors) }
@@ -974,13 +900,13 @@ internal fun ShelfCard(
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
-    /** Set on a Library playlist card that's in [AppSettings.pinnedPlaylists][com.music.bitchord.data.settings.AppSettings.pinnedPlaylists]. */
     isPinned: Boolean = false,
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
     Column(
         modifier = modifier
+            .tvFocusable()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .contextClick(onLongPress),
     ) {
